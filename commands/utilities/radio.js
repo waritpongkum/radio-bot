@@ -5,10 +5,8 @@ const {
     createAudioResource,
     entersState,
     VoiceConnectionStatus,
-    AudioPlayerStatus,
 } = require('@discordjs/voice');
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
+const fetch = require("node-fetch");
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('radio')
@@ -17,32 +15,56 @@ module.exports = {
             option.setName('search')
                 .setDescription('Search for a station name')
                 .setRequired(false)
+        )
+        .addIntegerOption(option =>
+            option.setName('limit')
+                .setDescription('Number of available stations in queue (Default: 10)')
+                .setMaxValue(100)
+                .setMinValue(1)
+        )
+        .addBooleanOption(option =>
+            option.setName('random')
+                .setDescription('Ramdom radio station')
         ),
-
     async execute(interaction) {
-        const query = interaction.options.getString('search') || '';
+
         const channel = interaction.member.voice.channel;
         if (!channel)
-            return interaction.reply({ content: '❌ Join a voice channel first.', flags: MessageFlags.Ephemeral });
+            return interaction.reply({
+                embeds: [new EmbedBuilder().setAuthor({ name: "❌ You are not in a voice chat." })],
+                flags: MessageFlags.Ephemeral
+            });
 
-        const url = `https://de1.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&limit=100`;
+        const query = interaction.options.getString('search') || '';
+        const limit = interaction.options.getInteger('limit') || 10;
+        const random = interaction.options.getBoolean('random') ? 'random' : '';
+
+        const url = `https://de2.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&limit=${limit}&order=${random}`;
 
         let stations;
         try {
             const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+
             stations = await response.json();
-        } catch (err) {
-            return interaction.reply({ content: '❌ Failed to fetch stations.', flags: MessageFlags.Ephemeral });
+        } catch (error) {
+            console.error("Fetch failed:", error.message);
         }
 
         if (!stations || stations.length === 0) {
-            return interaction.reply({ content: '❌ No stations found.', flags: MessageFlags.Ephemeral });
+            return interaction.reply({
+                embeds: [new EmbedBuilder().setAuthor({ name: "❌ No stations found." })],
+                flags: MessageFlags.Ephemeral
+            });
         }
 
         const index = 0;
         const session = await createOrGetRadioSession(interaction.guildId, channel);
         if (!session) {
-            return interaction.reply({ content: '❌ Could not connect to VC.', flags: MessageFlags.Ephemeral });
+            return interaction.reply({
+                embeds: [new EmbedBuilder().setAuthor({ name: "❌ Could not connect to voice chat." })],
+                flags: MessageFlags.Ephemeral
+            });
         }
 
         session.stations = stations;
@@ -61,7 +83,7 @@ module.exports = {
         await interaction.reply({
             embeds: [new EmbedBuilder()
                 .setAuthor({
-                    name: `📻 Now Streaming ▸ ${station.name}`,
+                    name: `📻 Now Streaming ▸ ${truncate(station.name)}`,
                 })
                 .addFields(
                     {
@@ -91,11 +113,10 @@ module.exports = {
                     },
                     {
                         name: "Homepage",
-                        value: `[Click here!](${station.homepage})`,
+                        value: `[Click here!](${station.homepage || station.url})`,
                         inline: true
                     },
                 )
-                .setImage("https://external-content.duckduckgo.com/ssv2/?scale=1&lang=en-US&colorScheme=dark&format=png&size=640x200&spn=0.009%2C0.0099&center=24.3204%2C73.0872&annotations=%5B%7B%22point%22%3A%2224.3204%2C73.0872%22%2C%22color%22%3A%2266ABFF%22%7D%5D")
                 .setColor("#00ff00")
             ],
             components: [row],
@@ -134,11 +155,11 @@ function playStream(session, url) {
     const resource = createAudioResource(url, { inlineVolume: true });
     session.player.play(resource);
 
-    session.player.once(AudioPlayerStatus.Playing, () => {
-        console.log('Now streaming:', url);
-    });
-
     session.player.on('error', error => {
         console.error('Player error:', error.message);
     });
+}
+
+function truncate(text, maxLength = 50) {
+    return text.length > maxLength ? text.slice(0, maxLength - 3) + "..." : text;
 }
