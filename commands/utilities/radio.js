@@ -28,9 +28,11 @@ module.exports = {
         ),
     async execute(interaction) {
 
+        await interaction.deferReply();
+
         const channel = interaction.member.voice.channel;
         if (!channel)
-            return interaction.reply({
+            return interaction.editReply({
                 embeds: [new EmbedBuilder().setAuthor({ name: "❌ You are not in a voice chat." })],
                 flags: MessageFlags.Ephemeral
             });
@@ -52,7 +54,7 @@ module.exports = {
         }
 
         if (!stations || stations.length === 0) {
-            return interaction.reply({
+            return interaction.editReply({
                 embeds: [new EmbedBuilder().setAuthor({ name: "❌ No stations found." })],
                 flags: MessageFlags.Ephemeral
             });
@@ -61,7 +63,7 @@ module.exports = {
         const index = 0;
         const session = await createOrGetRadioSession(interaction.guildId, channel);
         if (!session) {
-            return interaction.reply({
+            return interaction.editReply({
                 embeds: [new EmbedBuilder().setAuthor({ name: "❌ Could not connect to voice chat." })],
                 flags: MessageFlags.Ephemeral
             });
@@ -80,7 +82,7 @@ module.exports = {
 
         const station = stations[index];
 
-        await interaction.reply({
+        await interaction.editReply({
             embeds: [new EmbedBuilder()
                 .setAuthor({
                     name: `📻 Now Streaming ▸ ${truncate(station.name)}`,
