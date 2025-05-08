@@ -11,6 +11,8 @@ const client = new Client({
   ]
 });
 
+global.radioSessions = new Map();
+
 client.commands = new Collection();
 
 const foldersPath = path.join(__dirname, 'commands');
