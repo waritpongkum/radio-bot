@@ -1,4 +1,5 @@
-const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, EmbedBuilder,
+    StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType } = require('discord.js');
 const {
     joinVoiceChannel,
     createAudioPlayer,
@@ -28,8 +29,6 @@ module.exports = {
         ),
     async execute(interaction) {
 
-        await interaction.deferReply();
-
         const channel = interaction.member.voice.channel;
         if (!channel)
             return interaction.editReply({
@@ -54,77 +53,122 @@ module.exports = {
         }
 
         if (!stations || stations.length === 0) {
-            return interaction.editReply({
+            return interaction.reply({
                 embeds: [new EmbedBuilder().setAuthor({ name: "❌ No stations found." })],
                 flags: MessageFlags.Ephemeral
             });
         }
 
-        const index = 0;
-        const session = await createOrGetRadioSession(interaction.guildId, channel);
-        if (!session) {
-            return interaction.editReply({
-                embeds: [new EmbedBuilder().setAuthor({ name: "❌ Could not connect to voice chat." })],
-                flags: MessageFlags.Ephemeral
-            });
-        }
+        stations = stations.slice(0, 5);
 
-        session.stations = stations;
-        session.index = index;
+        const connection = joinVoiceChannel({
+            channelId: channel.id,
+            guildId: channel.guild.id,
+            adapterCreator: channel.guild.voiceAdapterCreator,
+        });
+        const player = createAudioPlayer();
+        const resource = createAudioResource(stations[0].url);
+        connection.subscribe(player);
+        player.play(resource)
 
-        playStream(session, stations[index].url);
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('prev').setLabel('⏮️ Previous').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('next').setLabel('⏭️ Next').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('stop').setLabel('Stop').setStyle(ButtonStyle.Danger)
+        const options = stations.map(station =>
+            new StringSelectMenuOptionBuilder()
+                .setLabel(station.name)
+                .setValue(station.stationuuid)
         );
 
-        const station = stations[index];
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('station-select')
+            .setPlaceholder('Pick a station')
+            .addOptions(options);
 
-        await interaction.editReply({
-            embeds: [new EmbedBuilder()
-                .setAuthor({
-                    name: `📻 Now Streaming ▸ ${truncate(station.name)}`,
-                })
-                .addFields(
-                    {
-                        name: "Country",
-                        value: `${station.country}, ${station.countrycode}`,
-                        inline: true
-                    },
-                    {
-                        name: "Language",
-                        value: `${station.language}`,
-                        inline: true
-                    },
-                    {
-                        name: "Votes",
-                        value: `${station.votes}`,
-                        inline: true
-                    },
-                    {
-                        name: "Bitrate",
-                        value: `${station.bitrate}`,
-                        inline: true
-                    },
-                    {
-                        name: "CODEC",
-                        value: `${station.codec}`,
-                        inline: true
-                    },
-                    {
-                        name: "Homepage",
-                        value: `[Click here!](${station.homepage || station.url})`,
-                        inline: true
-                    },
-                )
-                .setColor("#00ff00")
-            ],
-            components: [row],
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('stop').setLabel('Stop').setStyle(ButtonStyle.Danger),
+        );
+
+        const response = await interaction.reply({
+            embeds: [createEmbed(stations[0])],
+            components: [new ActionRowBuilder().addComponents(selectMenu), row],
+            withResponse: true,
         });
+
+        const collector = response.resource.message.createMessageComponentCollector({ componentType: ComponentType.StringSelect });
+
+        collector.on('collect', async i => {
+            const station = stations.find(s => s.stationuuid === i.values[0]);
+            player.stop();
+            const resource = createAudioResource(station.url);
+            player.play(resource);
+
+            await i.update({
+                embeds: [createEmbed(station)],
+                components: [new ActionRowBuilder().addComponents(selectMenu), row]
+            });
+        });
+
+        const buttonCollector = response.resource.message.createMessageComponentCollector({
+            componentType: ComponentType.Button
+        });
+
+        buttonCollector.on('collect', async i => {
+            if (i.customId === 'stop') {
+                player.stop(true);
+                player.removeAllListeners();
+                connection.destroy();
+
+                await i.update({
+                    embeds: [new EmbedBuilder().setAuthor({name: `🛑 Stop streaming!`}).setColor("#ff0000")],
+                    components: []
+                });
+
+                collector.stop();
+                buttonCollector.stop();
+            }
+        });
+
+
     },
 };
+
+function createEmbed(station) {
+    return new EmbedBuilder()
+        .setAuthor({
+            name: `📻 Now Streaming ▸ ${truncate(station.name)}`,
+        })
+        .addFields(
+            {
+                name: "Country",
+                value: `${station.country}, ${station.countrycode}`,
+                inline: true
+            },
+            {
+                name: "Language",
+                value: `${station.language}`,
+                inline: true
+            },
+            {
+                name: "Votes",
+                value: `${station.votes}`,
+                inline: true
+            },
+            {
+                name: "Bitrate",
+                value: `${station.bitrate}`,
+                inline: true
+            },
+            {
+                name: "CODEC",
+                value: `${station.codec}`,
+                inline: true
+            },
+            {
+                name: "Homepage",
+                value: `[Click here!](${station.homepage || station.url})`,
+                inline: true
+            },
+        )
+        .setColor("#00ff00")
+}
 
 async function createOrGetRadioSession(guildId, channel) {
     let session = global.radioSessions.get(guildId);
