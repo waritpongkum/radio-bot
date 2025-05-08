@@ -40,7 +40,7 @@ module.exports = {
         const limit = interaction.options.getInteger('limit') || 10;
         const random = interaction.options.getBoolean('random') ? 'random' : '';
 
-        const url = `https://de2.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&limit=${limit}&order=${random}`;
+        const url = `https://de1.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&limit=${limit}&order=${random}`;
 
         let stations;
         try {
