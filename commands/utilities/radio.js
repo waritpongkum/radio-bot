@@ -1,5 +1,5 @@
-const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, EmbedBuilder,
-    StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags,
+    EmbedBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType } = require('discord.js');
 const {
     joinVoiceChannel,
     createAudioPlayer,
@@ -15,7 +15,10 @@ module.exports = {
         .addStringOption(option =>
             option.setName('search')
                 .setDescription('Search for a station name')
-                .setRequired(false)
+        )
+        .addStringOption(option =>
+            option.setName('countrycode')
+                .setDescription('Search for a station on the country')
         )
         .addIntegerOption(option =>
             option.setName('limit')
@@ -37,10 +40,11 @@ module.exports = {
             });
 
         const query = interaction.options.getString('search') || '';
+        const countrycode = interaction.options.getString('countrycode') || '';
         const limit = interaction.options.getInteger('limit') || 10;
         const random = interaction.options.getBoolean('random') ? 'random' : '';
 
-        const url = `https://de2.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&limit=${limit}&order=${random}`;
+        const url = `https://de1.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&countrycode=${countrycode}&limit=${limit}&order=${random}`;
 
         let stations;
         try {
@@ -59,7 +63,7 @@ module.exports = {
             });
         }
 
-        stations = stations.slice(0, 5);
+        stations = stations.slice(0, Math.max(10, stations.length));
 
         const connection = joinVoiceChannel({
             channelId: channel.id,
@@ -73,7 +77,7 @@ module.exports = {
 
         const options = stations.map(station =>
             new StringSelectMenuOptionBuilder()
-                .setLabel(station.name)
+                .setLabel(truncate(station.name))
                 .setValue(station.stationuuid)
         );
 
@@ -83,7 +87,7 @@ module.exports = {
             .addOptions(options);
 
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('stop').setLabel('Stop').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('stop').setLabel('Stop').setStyle(ButtonStyle.Danger)
         );
 
         const response = await interaction.reply({
@@ -102,7 +106,6 @@ module.exports = {
 
             await i.update({
                 embeds: [createEmbed(station)],
-                components: [new ActionRowBuilder().addComponents(selectMenu), row]
             });
         });
 
@@ -114,19 +117,29 @@ module.exports = {
             if (i.customId === 'stop') {
                 player.stop(true);
                 player.removeAllListeners();
-                connection.destroy();
-
+                if (connection.state.status !== VoiceConnectionStatus.Destroyed) connection.destroy();
                 await i.update({
-                    embeds: [new EmbedBuilder().setAuthor({name: `🛑 Stop streaming!`}).setColor("#ff0000")],
-                    components: []
+                    embeds: [new EmbedBuilder()
+                        .setAuthor({ name: "🛑 Stop streaming!" }).setColor("#ff0000")],
+                    components: [],
                 });
-
                 collector.stop();
                 buttonCollector.stop();
             }
         });
 
-
+        connection.on('stateChange', async (oldState, newState) => {
+            if (newState.status === VoiceConnectionStatus.Disconnected) {
+                await interaction.editReply({
+                    embeds: [new EmbedBuilder()
+                        .setAuthor({ name: "🚫 Disconnected from voice chat!" }).setColor("#ff0000")],
+                    components: [],
+                });
+                if (connection.state.status !== VoiceConnectionStatus.Destroyed) connection.destroy();
+                collector.stop();
+                buttonCollector.stop();
+            }
+        });
     },
 };
 
@@ -138,7 +151,7 @@ function createEmbed(station) {
         .addFields(
             {
                 name: "Country",
-                value: `${station.country}, ${station.countrycode}`,
+                value: `${station.country} ${station.countrycode}`,
                 inline: true
             },
             {
@@ -168,42 +181,6 @@ function createEmbed(station) {
             },
         )
         .setColor("#00ff00")
-}
-
-async function createOrGetRadioSession(guildId, channel) {
-    let session = global.radioSessions.get(guildId);
-
-    if (!session) {
-        const connection = joinVoiceChannel({
-            channelId: channel.id,
-            guildId: channel.guild.id,
-            adapterCreator: channel.guild.voiceAdapterCreator,
-        });
-
-        try {
-            await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
-        } catch (err) {
-            connection.destroy();
-            return null;
-        }
-
-        const player = createAudioPlayer();
-        connection.subscribe(player);
-        session = { connection, player, stations: [], index: 0 };
-        global.radioSessions.set(guildId, session);
-    }
-
-    return session;
-}
-
-function playStream(session, url) {
-    session.player.stop();
-    const resource = createAudioResource(url, { inlineVolume: true });
-    session.player.play(resource);
-
-    session.player.on('error', error => {
-        console.error('Player error:', error.message);
-    });
 }
 
 function truncate(text, maxLength = 50) {
