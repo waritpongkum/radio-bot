@@ -63,7 +63,9 @@ module.exports = {
 
         const channel = interaction.member.voice.channel;
         if (!channel)
-            return interaction.editReply({
+            return interaction.editReply
+        
+        ({
                 embeds: [new EmbedBuilder().setAuthor({ name: "❌ You are not in a voice chat." })],
                 flags: MessageFlags.Ephemeral
             });
