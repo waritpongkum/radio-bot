@@ -4,33 +4,62 @@ const {
     joinVoiceChannel,
     createAudioPlayer,
     createAudioResource,
-    entersState,
     VoiceConnectionStatus,
 } = require('@discordjs/voice');
 const fetch = require("node-fetch");
+const countries = require('i18n-iso-countries');
+
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('radio')
         .setDescription('Start radio with buttons')
         .addStringOption(option =>
             option.setName('search')
-                .setDescription('Search for a station name')
+                .setDescription("Search for a station name")
         )
         .addStringOption(option =>
-            option.setName('countrycode')
-                .setDescription('Search for a station on the country')
+            option.setName('tags')
+                .setDescription("Filter stations by tags")
+        )
+        .addStringOption(option =>
+            option.setName('country')
+                .setDescription("Filter stations by country")
         )
         .addIntegerOption(option =>
             option.setName('limit')
-                .setDescription('Number of available stations in queue (Default: 10)')
+                .setDescription("Number of available stations in options (Default: 10)")
                 .setMaxValue(100)
                 .setMinValue(1)
         )
-        .addBooleanOption(option =>
-            option.setName('random')
-                .setDescription('Ramdom radio station')
+        .addStringOption(option =>
+            option.setName('sortby')
+                .setDescription("Sorting type")
+                .setChoices(
+                    { name: 'random', value: 'random' },
+                    { name: 'name', value: 'name' },
+                    { name: 'tags', value: 'tags' },
+                    { name: 'country', value: 'country' },
+                    { name: 'state', value: 'state' },
+                    { name: 'language', value: 'language' },
+                    { name: 'votes', value: 'votes' },
+                    { name: 'codec', value: 'codec' },
+                    { name: 'bitrate', value: 'bitrate' },
+                    { name: 'clickcount', value: 'clickcount' },
+                    { name: 'clicktrend', value: 'clicktrend' }
+                )
+        )
+        .addStringOption(option =>
+            option.setName('order')
+            .setDescription("Sorting order")
+            .setChoices(
+                    { name: 'Ascending', value: 'false' },
+                    { name: 'Descending', value: 'true' },
+            )
         ),
     async execute(interaction) {
+
+        await interaction.deferReply();
 
         const channel = interaction.member.voice.channel;
         if (!channel)
@@ -40,11 +69,15 @@ module.exports = {
             });
 
         const query = interaction.options.getString('search') || '';
-        const countrycode = interaction.options.getString('countrycode') || '';
+        const tags = interaction.options.getString('tags') || '';
+        const country = interaction.options.getString('country') || '';
         const limit = interaction.options.getInteger('limit') || 10;
-        const random = interaction.options.getBoolean('random') ? 'random' : '';
+        const order = interaction.options.getString('sortby') || '';
+        const reverse = interaction.options.getString('order') || ''
 
-        const url = `https://de1.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&countrycode=${countrycode}&limit=${limit}&order=${random}`;
+        const url = `https://de1.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&tags=${encodeURIComponent(tags)}&countrycode=${getCountryCode(country)}&limit=${limit}&order=${order}&reverse=${reverse}`;
+
+        console.log(url);
 
         let stations;
         try {
@@ -57,23 +90,11 @@ module.exports = {
         }
 
         if (!stations || stations.length === 0) {
-            return interaction.reply({
+            return interaction.editReply({
                 embeds: [new EmbedBuilder().setAuthor({ name: "❌ No stations found." })],
                 flags: MessageFlags.Ephemeral
             });
         }
-
-        stations = stations.slice(0, Math.max(10, stations.length));
-
-        const connection = joinVoiceChannel({
-            channelId: channel.id,
-            guildId: channel.guild.id,
-            adapterCreator: channel.guild.voiceAdapterCreator,
-        });
-        const player = createAudioPlayer();
-        const resource = createAudioResource(stations[0].url);
-        connection.subscribe(player);
-        player.play(resource)
 
         const options = stations.map(station =>
             new StringSelectMenuOptionBuilder()
@@ -81,40 +102,78 @@ module.exports = {
                 .setValue(station.stationuuid)
         );
 
+        const p_limit = 10;
+        let p_idx = 0;
+
+        const subStations = chunkArray(stations, p_limit)
+
+        const pages = chunkArray(options, p_limit)
+
+        const connection = joinVoiceChannel({
+            channelId: channel.id,
+            guildId: channel.guild.id,
+            adapterCreator: channel.guild.voiceAdapterCreator,
+        });
+
+        const player = createAudioPlayer();
+        const resource = createAudioResource(stations[0].url);
+        connection.subscribe(player);
+        player.play(resource)
+
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId('station-select')
-            .setPlaceholder('Pick a station')
-            .addOptions(options);
+            .setPlaceholder("Pick a station - Page 1")
+            .setOptions(pages[p_idx]);
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('stop').setLabel('Stop').setStyle(ButtonStyle.Danger)
-        );
+        const prev_but = new ButtonBuilder().setCustomId('prev').setLabel("Previous page").setStyle(ButtonStyle.Secondary);
+        const next_but = new ButtonBuilder().setCustomId('next').setLabel("Next page").setStyle(ButtonStyle.Secondary);
+        const stop_but = new ButtonBuilder().setCustomId('stop').setLabel("Stop").setStyle(ButtonStyle.Danger);
 
-        const response = await interaction.reply({
-            embeds: [createEmbed(stations[0])],
-            components: [new ActionRowBuilder().addComponents(selectMenu), row],
+        const f_page_row = new ActionRowBuilder().setComponents(next_but, stop_but);
+        const m_page_row = new ActionRowBuilder().setComponents(prev_but, next_but, stop_but);
+        const l_page_row = new ActionRowBuilder().setComponents(prev_but, stop_but);
+
+        let row = (pages.length > 1) ? f_page_row : new ActionRowBuilder().setComponents(stop_but)
+
+        const response = await interaction.editReply({
+            embeds: [createEmbed(stations[0], interaction.member)],
+            components: [new ActionRowBuilder().setComponents(selectMenu), row],
             withResponse: true,
         });
 
-        const collector = response.resource.message.createMessageComponentCollector({ componentType: ComponentType.StringSelect });
+        const selectMenuCollector = response.createMessageComponentCollector({ componentType: ComponentType.StringSelect });
 
-        collector.on('collect', async i => {
-            const station = stations.find(s => s.stationuuid === i.values[0]);
+        selectMenuCollector.on('collect', async i => {
+            const station = subStations[p_idx].find(s => s.stationuuid === i.values[0]);
             player.stop();
             const resource = createAudioResource(station.url);
             player.play(resource);
 
             await i.update({
-                embeds: [createEmbed(station)],
+                embeds: [createEmbed(station, i.member)],
             });
         });
 
-        const buttonCollector = response.resource.message.createMessageComponentCollector({
+        const buttonCollector = response.createMessageComponentCollector({
             componentType: ComponentType.Button
         });
 
         buttonCollector.on('collect', async i => {
-            if (i.customId === 'stop') {
+            if (i.customId === 'next' && p_idx < pages.length) {
+                p_idx += 1
+                selectMenu.setPlaceholder(`Pick a station - Page ${p_idx + 1}/${pages.length}`).setOptions(pages[p_idx]);
+                row = (p_idx >= pages.length - 1) ? l_page_row : m_page_row;
+                await i.update({
+                    components: [new ActionRowBuilder().setComponents(selectMenu), row]
+                })
+            } else if (i.customId === 'prev' && p_idx > 0) {
+                p_idx -= 1
+                selectMenu.setPlaceholder(`Pick a station - Page ${p_idx + 1}`).setOptions(pages[p_idx]);
+                row = (p_idx <= 0) ? f_page_row : m_page_row;
+                await i.update({
+                    components: [new ActionRowBuilder().setComponents(selectMenu), row]
+                })
+            } else if (i.customId === 'stop') {
                 player.stop(true);
                 player.removeAllListeners();
                 if (connection.state.status !== VoiceConnectionStatus.Destroyed) connection.destroy();
@@ -123,7 +182,7 @@ module.exports = {
                         .setAuthor({ name: "🛑 Stop streaming!" }).setColor("#ff0000")],
                     components: [],
                 });
-                collector.stop();
+                selectMenuCollector.stop();
                 buttonCollector.stop();
             }
         });
@@ -136,14 +195,14 @@ module.exports = {
                     components: [],
                 });
                 if (connection.state.status !== VoiceConnectionStatus.Destroyed) connection.destroy();
-                collector.stop();
+                selectMenuCollector.stop();
                 buttonCollector.stop();
             }
         });
     },
 };
 
-function createEmbed(station) {
+function createEmbed(station, member) {
     return new EmbedBuilder()
         .setAuthor({
             name: `📻 Now Streaming ▸ ${truncate(station.name)}`,
@@ -181,8 +240,30 @@ function createEmbed(station) {
             },
         )
         .setColor("#00ff00")
+        .setFooter({
+            text: member.user.tag,
+            iconURL: member.user.displayAvatarURL(),
+        })
+        .setTimestamp();
+}
+
+function chunkArray(array, size = 25) {
+    return Array.from({ length: Math.ceil(array.length / size) }, (_, i) =>
+        array.slice(i * size, i * size + size)
+    );
 }
 
 function truncate(text, maxLength = 50) {
     return text.length > maxLength ? text.slice(0, maxLength - 3) + "..." : text;
+}
+
+function getCountryCode(inputName) {
+    const normalized = inputName.trim().toLowerCase();
+    const code = countries.getAlpha2Code(normalized, 'en');
+    return code || '';
+}
+
+function getCountryCodeFuzzy(name) {
+    const result = fuse.search(name.trim());
+    return result.length ? result[0].item.code : null;
 }
