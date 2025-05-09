@@ -8,7 +8,7 @@ const {
 } = require('@discordjs/voice');
 const fetch = require("node-fetch");
 const countries = require('i18n-iso-countries');
-
+countries.registerLocale(require('i18n-iso-countries/langs/en.json'));
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -25,6 +25,7 @@ module.exports = {
         .addStringOption(option =>
             option.setName('country')
                 .setDescription("Filter stations by country")
+                .setAutocomplete(true)
         )
         .addIntegerOption(option =>
             option.setName('limit')
@@ -51,33 +52,31 @@ module.exports = {
         )
         .addStringOption(option =>
             option.setName('order')
-            .setDescription("Sorting order")
-            .setChoices(
+                .setDescription("Sorting order")
+                .setChoices(
                     { name: 'Ascending', value: 'false' },
                     { name: 'Descending', value: 'true' },
-            )
+                )
         ),
     async execute(interaction) {
-
         await interaction.deferReply();
 
         const channel = interaction.member.voice.channel;
+
         if (!channel)
-            return interaction.editReply
-        
-        ({
+            return interaction.editReply({
                 embeds: [new EmbedBuilder().setAuthor({ name: "❌ You are not in a voice chat." })],
                 flags: MessageFlags.Ephemeral
             });
 
         const query = interaction.options.getString('search') || '';
         const tags = interaction.options.getString('tags') || '';
-        const country = interaction.options.getString('country') || '';
+        const countrycode = interaction.options.getString('country') || '';
         const limit = interaction.options.getInteger('limit') || 10;
         const order = interaction.options.getString('sortby') || '';
         const reverse = interaction.options.getString('order') || ''
 
-        const url = `https://de1.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&tags=${encodeURIComponent(tags)}&countrycode=${getCountryCode(country)}&limit=${limit}&order=${order}&reverse=${reverse}`;
+        const url = `https://de1.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&tags=${encodeURIComponent(tags)}&countrycode=${countrycode}&limit=${limit}&order=${order}&reverse=${reverse}`;
 
         console.log(url);
 
@@ -124,7 +123,7 @@ module.exports = {
 
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId('station-select')
-            .setPlaceholder("Pick a station - Page 1")
+            .setPlaceholder(`Pick a station - Page ${p_idx + 1}/${pages.length}`)
             .setOptions(pages[p_idx]);
 
         const prev_but = new ButtonBuilder().setCustomId('prev').setLabel("Previous page").setStyle(ButtonStyle.Secondary);
@@ -170,7 +169,7 @@ module.exports = {
                 })
             } else if (i.customId === 'prev' && p_idx > 0) {
                 p_idx -= 1
-                selectMenu.setPlaceholder(`Pick a station - Page ${p_idx + 1}`).setOptions(pages[p_idx]);
+                selectMenu.setPlaceholder(`Pick a station - Page ${p_idx + 1}/${pages.length}`).setOptions(pages[p_idx]);
                 row = (p_idx <= 0) ? f_page_row : m_page_row;
                 await i.update({
                     components: [new ActionRowBuilder().setComponents(selectMenu), row]
@@ -202,12 +201,30 @@ module.exports = {
             }
         });
     },
+
+    async autocomplete(interaction) {
+        const focused = interaction.options.getFocused();
+        const allCountries = countries.getNames('en');
+
+        const filtered = Object.entries(allCountries)
+            .filter(([code, name]) =>
+                name.toLowerCase().startsWith(focused.toLowerCase())
+            )
+            .slice(0, 25)
+            .map(([code, name]) => ({
+                name: name,
+                value: code,
+            }));
+
+        await interaction.respond(filtered);
+    }
 };
 
 function createEmbed(station, member) {
     return new EmbedBuilder()
         .setAuthor({
-            name: `📻 Now Streaming ▸ ${truncate(station.name)}`,
+            name: `Now Streaming ▸ ${truncate(station.name)}`,
+            iconURL: "https://cdn.discordapp.com/emojis/1370396961336983593.gif"
         })
         .addFields(
             {
@@ -257,15 +274,4 @@ function chunkArray(array, size = 25) {
 
 function truncate(text, maxLength = 50) {
     return text.length > maxLength ? text.slice(0, maxLength - 3) + "..." : text;
-}
-
-function getCountryCode(inputName) {
-    const normalized = inputName.trim().toLowerCase();
-    const code = countries.getAlpha2Code(normalized, 'en');
-    return code || '';
-}
-
-function getCountryCodeFuzzy(name) {
-    const result = fuse.search(name.trim());
-    return result.length ? result[0].item.code : null;
 }
