@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags,
-    EmbedBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType } = require('discord.js');
+    EmbedBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType,
+    PermissionFlagsBits } = require('discord.js');
 const {
     joinVoiceChannel,
     createAudioPlayer,
@@ -69,6 +70,19 @@ module.exports = {
                 flags: MessageFlags.Ephemeral
             });
 
+        const permissions = channel.permissionsFor(interaction.guild.members.me);
+        if (!permissions.has(PermissionFlagsBits.Connect)) {
+            return interaction.editReply({
+                embeds: [new EmbedBuilder().setAuthor({ name: "❌ I do not have permission to connect to the voice chat." })],
+                flags: MessageFlags.Ephemeral
+            });
+        }
+        if (!permissions.has(PermissionFlagsBits.Speak)) {
+            return interaction.editReply({
+                embeds: [new EmbedBuilder().setAuthor({ name: "❌ I do not have permission to speak in the voice chat." })],
+                flags: MessageFlags.Ephemeral
+            });
+        }
         const query = interaction.options.getString('search') || '';
         const tags = interaction.options.getString('tags') || '';
         const countrycode = interaction.options.getString('country') || '';
