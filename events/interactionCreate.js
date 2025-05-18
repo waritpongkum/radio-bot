@@ -13,6 +13,7 @@ module.exports = {
 
             try {
                 await command.execute(interaction);
+                console.log(`${interaction.member.user.tag} called /${interaction.commandName} command`);
             } catch (error) {
                 console.error(`Error executing ${interaction.commandName}`);
                 console.error(error);

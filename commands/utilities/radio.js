@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags,
     EmbedBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType,
-    PermissionFlagsBits } = require('discord.js');
+    } = require('discord.js');
 const {
     joinVoiceChannel,
     createAudioPlayer,
@@ -14,7 +14,7 @@ countries.registerLocale(require('i18n-iso-countries/langs/en.json'));
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('radio')
-        .setDescription('Start radio with buttons')
+        .setDescription('Stream radio')
         .addStringOption(option =>
             option.setName('search')
                 .setDescription("Search for a station name")
@@ -43,9 +43,7 @@ module.exports = {
                     { name: 'tags', value: 'tags' },
                     { name: 'country', value: 'country' },
                     { name: 'state', value: 'state' },
-                    { name: 'language', value: 'language' },
                     { name: 'votes', value: 'votes' },
-                    { name: 'codec', value: 'codec' },
                     { name: 'bitrate', value: 'bitrate' },
                     { name: 'clickcount', value: 'clickcount' },
                     { name: 'clicktrend', value: 'clicktrend' }
@@ -60,24 +58,31 @@ module.exports = {
                 )
         ),
     async execute(interaction) {
+
         await interaction.deferReply();
 
         const channel = interaction.member.voice.channel;
 
-        if (!channel)
+        if (!channel) {
             return interaction.editReply({
                 embeds: [new EmbedBuilder().setAuthor({ name: "❌ You are not in a voice chat." })],
                 flags: MessageFlags.Ephemeral
             });
-
-        const permissions = channel.permissionsFor(interaction.guild.members.me);
-        if (!permissions.has(PermissionFlagsBits.Connect)) {
+        }
+        const botChannel = interaction.guild.members.me.voice.channel;
+        if (botChannel && channel !== botChannel) {
+            return interaction.editReply({
+                embeds: [new EmbedBuilder().setAuthor({ name: "❌ I am streaming in another voice chat." })],
+                flags: MessageFlags.Ephemeral
+            });
+        }
+        if (!channel.joinable) {
             return interaction.editReply({
                 embeds: [new EmbedBuilder().setAuthor({ name: "❌ I do not have permission to connect to the voice chat." })],
                 flags: MessageFlags.Ephemeral
             });
         }
-        if (!permissions.has(PermissionFlagsBits.Speak)) {
+        if (!channel.speakable) {
             return interaction.editReply({
                 embeds: [new EmbedBuilder().setAuthor({ name: "❌ I do not have permission to speak in the voice chat." })],
                 flags: MessageFlags.Ephemeral
@@ -91,8 +96,6 @@ module.exports = {
         const reverse = interaction.options.getString('order') || ''
 
         const url = `https://de1.api.radio-browser.info/json/stations/search?name=${encodeURIComponent(query)}&tags=${encodeURIComponent(tags)}&countrycode=${countrycode}&limit=${limit}&order=${order}&reverse=${reverse}`;
-
-        console.log(url);
 
         let stations;
         try {
@@ -155,6 +158,8 @@ module.exports = {
             components: [new ActionRowBuilder().setComponents(selectMenu), row],
             withResponse: true,
         });
+
+        console.log(channel.members);
 
         const selectMenuCollector = response.createMessageComponentCollector({ componentType: ComponentType.StringSelect });
 
